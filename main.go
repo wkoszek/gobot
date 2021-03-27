@@ -27,14 +27,12 @@ func main() {
 	}
 	http.HandleFunc("/info", handleInfo)
 	http.Handle("/build/", http.StripPrefix("/build/", http.HandlerFunc(handleBuild)))
+
 	listen := ":" + os.Getenv("PORT")
 	if listen == ":" {
 		listen = ":9001"
 	}
-	err := http.ListenAndServe(listen, nil)
-	if err != nil {
-		panic(err)
-	}
+	log.Fatal(http.ListenAndServe(listen, nil))
 }
 
 func handleInfo(w http.ResponseWriter, r *http.Request) {
