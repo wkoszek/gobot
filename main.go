@@ -1,13 +1,11 @@
 package main
 
 import (
-	"github.com/kr/tarutil"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
 	"strconv"
 	"time"
 )
@@ -31,7 +29,7 @@ func main() {
 	http.Handle("/build/", http.StripPrefix("/build/", http.HandlerFunc(handleBuild)))
 	listen := ":" + os.Getenv("PORT")
 	if listen == ":" {
-		listen = ":8000"
+		listen = ":9001"
 	}
 	err := http.ListenAndServe(listen, nil)
 	if err != nil {
@@ -40,11 +38,13 @@ func main() {
 }
 
 func handleInfo(w http.ResponseWriter, r *http.Request) {
+	println("handleinfo")
 	w.Write(version)
 	w.Write(distenv)
 }
 
 func handleBuild(w http.ResponseWriter, r *http.Request) {
+	println("build")
 	j := &job{
 		pkg:  r.URL.Path,
 		tar:  http.MaxBytesReader(w, r.Body, MaxTarSize),
@@ -68,46 +68,52 @@ func handleBuild(w http.ResponseWriter, r *http.Request) {
 }
 
 func worker(n int) {
-	gopath := "/tmp/" + strconv.Itoa(n)
+	builddir := "/tmp/" + strconv.Itoa(n)
 	for j := range Q {
-		if err := build(j, gopath); err != nil {
+		if err := extractAndBuild(j, builddir); err != nil {
 			j.err = err
 		}
 		j.done <- struct{}{}
 	}
 }
 
-func build(j *job, gopath string) error {
-	defer os.RemoveAll(gopath)
-	if err := os.RemoveAll(gopath); err != nil {
+func extractAndBuild(j *job, builddir string) error {
+	defer os.RemoveAll(builddir)
+	if err := os.RemoveAll(builddir); err != nil {
 		return err
 	}
-	err := tarutil.ExtractAll(j.tar, gopath, 0)
+
+	if err := os.MkdirAll(builddir, 0777); err != nil {
+		return err
+	}
+
+	err := ExtractAll(j.tar, builddir, 0)
 	if err != nil {
 		return err
 	}
-	j.out, err = goget(gopath, j.pkg)
+	j.out, err = gobuild(builddir, j.pkg)
 	if err != nil {
 		return err
 	}
-	j.bin, err = os.Open(gopath + "/bin/" + path.Base(j.pkg))
+	j.bin, err = os.Open(builddir + "/program")
 	return err
 }
 
-func goget(gopath, pkg string) ([]byte, error) {
-	cmd := exec.Command("go", "get", pkg)
-	cmd.Env = append(os.Environ(), "GOPATH="+gopath)
+func gobuild(builddir, pkg string) ([]byte, error) {
+	cmd := exec.Command("go", "build", "-o", "program")
+	//cmd.Env = append(os.Environ(), "GOPATH="+builddir)
+	cmd.Dir = builddir
 	return cmd.CombinedOutput()
 }
 
 type job struct {
-	tar    io.Reader
-	pkg    string
-	gopath string
-	bin    *os.File
-	out    []byte
-	err    error
-	done   chan struct{}
+	tar      io.Reader
+	pkg      string
+	builddir string
+	bin      *os.File
+	out      []byte
+	err      error
+	done     chan struct{}
 }
 
 func capture(name string, arg ...string) []byte {
